@@ -1,6 +1,5 @@
 package org.sharrissf.samples;
 
-import java.util.Random;
 import java.util.concurrent.BrokenBarrierException;
 
 import net.sf.ehcache.CacheManager;
@@ -36,10 +35,10 @@ import org.terracotta.util.ClusteredAtomicLong;
  * 
  */
 public class CacheLoadFun {
-    private static final int MAX_ELEMENTS_ON_DISK = 1000000;
+    private static final int MAX_ELEMENTS_ON_DISK = -1;// 1000000;
     private final static int BATCH_SIZE = 5000;
-    private final static int TTL_IN_SECONDS = 60;
-    
+    private final static int TTL_IN_SECONDS = 20;
+
     private CacheManager cacheManager;
 
     private Ehcache cache;
@@ -48,6 +47,7 @@ public class CacheLoadFun {
     private String nodeId;
     private final int entryCount;
     private final boolean doGets;
+    private final int nodeCount;
 
     /**
      * 
@@ -66,10 +66,11 @@ public class CacheLoadFun {
      */
     public CacheLoadFun(int nodeCount, int entryCount, String host, String port, boolean doGets) throws InterruptedException,
             BrokenBarrierException {
+        this.nodeCount = nodeCount;
         this.doGets = doGets;
         this.entryCount = entryCount;
         initializeCache(host, port);
-        initialize(nodeCount, host, port);
+        initialize(host, port);
     }
 
     /**
@@ -110,12 +111,14 @@ public class CacheLoadFun {
             String k = createKeyFromCount(i);
 
             if ((i + 1) % BATCH_SIZE == 0) {
-                System.out.println("size: " + cache.getSize() + " i=" + (i + 1) + " time: " + (System.currentTimeMillis() - t) / 1000
-                        + " key size: " + k.getBytes().length);
-                t = System.currentTimeMillis();
+
                 value = buildValueString();
+                int evictionCount = -1;
                 if (doGets)
-                    forceRandomReadOfEntries(i, BATCH_SIZE * 2);
+                    evictionCount = readOldEntries(i);
+                System.out.println("size: " + cache.getSize() + " i=" + (i + 1) + " time: " + (System.currentTimeMillis() - t) / 1000
+                        + " key size: " + k.getBytes().length + " eviction count:" + evictionCount);
+                t = System.currentTimeMillis();
             }
 
             cache.put(new Element(k, value));
@@ -128,16 +131,28 @@ public class CacheLoadFun {
         return "K" + i + "-" + getNodeId();
     }
 
-    private void forceRandomReadOfEntries(int i, int lookupCount) {
-        Random r = new Random();
-        for (int j = 0; j < lookupCount; j++) {
-            cache.get(createKeyFromCount(r.nextInt(i)));
+    private int readOldEntries(int i) {
+        int evictionCount = 0;
+        // don't look at recent keys because they can't be ttl'd
+        int fudgeFactor = i - (TTL_IN_SECONDS / getNodeCount()) * BATCH_SIZE;
+        System.out.println("Fudge: " + fudgeFactor);
+        // Nothing to evict yet
+        if (fudgeFactor < 1)
+            return 0;
+
+        int min = fudgeFactor;
+        int max = fudgeFactor + BATCH_SIZE;
+        for (int j = min; j < max; j++) {
+            if (null == cache.get(createKeyFromCount(j))) {
+                evictionCount++;
+            }
         }
+        return evictionCount;
     }
 
     private byte[] buildValueString() {
         String baseString = "REPEAT: This is a test of the emergency broadcast system. Please stand by. Making the string a little bigger to oome faster";
-        return (System.currentTimeMillis() + baseString + baseString + baseString).getBytes();
+        return (System.currentTimeMillis() + baseString).getBytes();
     }
 
     private void waitForAllNodes() throws InterruptedException, BrokenBarrierException {
@@ -161,7 +176,7 @@ public class CacheLoadFun {
 
     }
 
-    private void initialize(int nodeCount, String host, String port) {
+    private void initialize(String host, String port) {
         ClusteringToolkit clustering = new TerracottaClient(host + ":" + port).getToolkit();
 
         coordinationBarrier = clustering.getBarrier("startBarrier", nodeCount);
@@ -180,8 +195,8 @@ public class CacheLoadFun {
         cacheManagerConfig.addDefaultCache(new CacheConfiguration());
 
         // Create Cache
-        CacheConfiguration cacheConfig = new CacheConfiguration("testCache", -1).maxElementsOnDisk(MAX_ELEMENTS_ON_DISK).timeToLiveSeconds(TTL_IN_SECONDS).eternal(
-                false).terracotta(new TerracottaConfiguration().clustered(true).storageStrategy("DCV2"));
+        CacheConfiguration cacheConfig = new CacheConfiguration("testCache", -1).maxElementsOnDisk(MAX_ELEMENTS_ON_DISK).timeToLiveSeconds(
+                TTL_IN_SECONDS).eternal(false).terracotta(new TerracottaConfiguration().clustered(true).storageStrategy("DCV2"));
 
         cacheManagerConfig.addCache(cacheConfig);
 
@@ -211,5 +226,9 @@ public class CacheLoadFun {
                 + " connecting to " + host + ":" + port);
 
         new CacheLoadFun(nodeCount, entryCount, host, port, doGets).start();
+    }
+
+    public int getNodeCount() {
+        return nodeCount;
     }
 }
