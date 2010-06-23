@@ -18,7 +18,7 @@ import org.terracotta.util.ClusteredAtomicLong;
 /**
  * This is a small sample app that demonstrates the bulk loading characteristics of ehcache.
  * 
- * Usage: LargeCacheFun <nodeCount> <entryCount> <host> <port>
+ * Usage: CacheLoad2Fun <nodeCount> <entryCount> <host> <port>
  * 
  * 
  * Only node count is required. entryCount defaults to 100k host defaults to "localhost" and port "9510"
@@ -48,6 +48,7 @@ public class CacheLoadFun {
     private final int entryCount;
     private final boolean doGets;
     private final int nodeCount;
+    private int minValue = 0;
 
     /**
      * 
@@ -104,7 +105,7 @@ public class CacheLoadFun {
         System.out.println("Took: " + (System.currentTimeMillis() - t1) + " final size was " + cache.getSize());
     }
 
-    private void executeLoad(int entryCount) throws InterruptedException, BrokenBarrierException {
+    private void executeLoad(final int entryCount) throws InterruptedException, BrokenBarrierException {
         long t = System.currentTimeMillis();
         byte[] value = buildValueString();
         for (int i = 0; i < entryCount; i++) {
@@ -113,11 +114,10 @@ public class CacheLoadFun {
             if ((i + 1) % BATCH_SIZE == 0) {
 
                 value = buildValueString();
-                int evictionCount = -1;
                 if (doGets)
-                    evictionCount = readOldEntries(i);
+                    readOldEntries(i);
                 System.out.println("size: " + cache.getSize() + " i=" + (i + 1) + " time: " + (System.currentTimeMillis() - t) / 1000
-                        + " key size: " + k.getBytes().length + " eviction count:" + evictionCount);
+                        + " key size: " + k.getBytes().length);
                 t = System.currentTimeMillis();
             }
 
@@ -131,23 +131,21 @@ public class CacheLoadFun {
         return "K" + i + "-" + getNodeId();
     }
 
-    private int readOldEntries(int i) {
-        int evictionCount = 0;
-        // don't look at recent keys because they can't be ttl'd
-        int fudgeFactor = i - (TTL_IN_SECONDS / getNodeCount()) * BATCH_SIZE;
-        System.out.println("Fudge: " + fudgeFactor);
-        // Nothing to evict yet
-        if (fudgeFactor < 1)
-            return 0;
+    private void readOldEntries(final int localEntryCount) {
 
-        int min = fudgeFactor;
-        int max = fudgeFactor + BATCH_SIZE;
-        for (int j = min; j < max; j++) {
+        System.out.println("Starting read cycle at:" + minValue + "Local Entry count: " + localEntryCount);
+        for (int j = minValue; j < localEntryCount; j++) {
             if (null == cache.get(createKeyFromCount(j))) {
-                evictionCount++;
+                minValue = j;
+            } else {
+                System.out.println("Breaking at:" + j);
+                return;
+            }
+            if ((j + 1) % BATCH_SIZE == 0) {
+                System.out.println("Read 5000 minValue: " + minValue);
             }
         }
-        return evictionCount;
+        System.out.println("Ending read cycle at:" + minValue);
     }
 
     private byte[] buildValueString() {
