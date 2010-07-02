@@ -7,7 +7,7 @@ import net.sf.ehcache.Ehcache;
 import net.sf.ehcache.Element;
 import net.sf.ehcache.config.CacheConfiguration;
 import net.sf.ehcache.config.Configuration;
-import net.sf.ehcache.config.TerracottaConfigConfiguration;
+import net.sf.ehcache.config.TerracottaClientConfiguration;
 import net.sf.ehcache.config.TerracottaConfiguration;
 
 import org.terracotta.api.ClusteringToolkit;
@@ -35,9 +35,10 @@ import org.terracotta.util.ClusteredAtomicLong;
  * 
  */
 public class CacheLoadFun {
-    private static final int MAX_ELEMENTS_ON_DISK = -1;// 1000000;
+    private final static int SLEEP_TIME = 1000;
+    // private static final int MAX_ELEMENTS_ON_DISK = 1000000000;
     private final static int BATCH_SIZE = 5000;
-    private final static int TTL_IN_SECONDS = 20;
+    // private final static int TTL_IN_SECONDS = Integer.MAX_VALUE;
 
     private CacheManager cacheManager;
 
@@ -116,9 +117,16 @@ public class CacheLoadFun {
                 value = buildValueString();
                 if (doGets)
                     readOldEntries(i);
-                System.out.println("size: " + cache.getSize() + " i=" + (i + 1) + " time: " + (System.currentTimeMillis() - t) / 1000
-                        + " key size: " + k.getBytes().length);
+                if ((System.currentTimeMillis() - t) / 1000 > 5)
+                    System.out.println("BIG");
+                System.out.println(" i=" + (i + 1) + " time: " + (System.currentTimeMillis() - t) / 1000 + " key size: "
+                        + k.getBytes().length);
                 t = System.currentTimeMillis();
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException e) {
+
+                }
             }
 
             cache.put(new Element(k, value));
@@ -143,6 +151,12 @@ public class CacheLoadFun {
             }
             if ((j + 1) % BATCH_SIZE == 0) {
                 System.out.println("Read 5000 minValue: " + minValue);
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
             }
         }
         System.out.println("Ending read cycle at:" + minValue);
@@ -185,7 +199,7 @@ public class CacheLoadFun {
         Configuration cacheManagerConfig = new Configuration();
 
         // Add terracotta
-        TerracottaConfigConfiguration tcc = new TerracottaConfigConfiguration();
+        TerracottaClientConfiguration tcc = new TerracottaClientConfiguration();
         tcc.setUrl(host + ":" + port);
         cacheManagerConfig.addTerracottaConfig(tcc);
 
@@ -193,8 +207,9 @@ public class CacheLoadFun {
         cacheManagerConfig.addDefaultCache(new CacheConfiguration());
 
         // Create Cache
-        CacheConfiguration cacheConfig = new CacheConfiguration("testCache", -1).maxElementsOnDisk(MAX_ELEMENTS_ON_DISK).timeToLiveSeconds(
-                TTL_IN_SECONDS).eternal(false).terracotta(new TerracottaConfiguration().clustered(true).storageStrategy("DCV2"));
+        CacheConfiguration cacheConfig = new CacheConfiguration("testCache", -1).maxElementsInMemory(2000).
+        // maxElementsOnDisk(MAX_ELEMENTS_ON_DISK).timeToLiveSeconds(TTL_IN_SECONDS).
+                eternal(true).terracotta(new TerracottaConfiguration().clustered(true).concurrency(2).storageStrategy("DCV2"));
 
         cacheManagerConfig.addCache(cacheConfig);
 
